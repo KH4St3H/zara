@@ -1,0 +1,43 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:var(--tg-theme-bg-color,#fff);--fg:var(--tg-theme-text-color,#111);--hint:var(--tg-theme-hint-color,#888);--track:var(--tg-theme-secondary-bg-color,#eee);--btn:var(--tg-theme-button-color,#2a8);--btnt:var(--tg-theme-button-text-color,#fff);--sep:var(--tg-theme-section-separator-color,#ddd)}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.35 -apple-system,system-ui,sans-serif;padding:14px}
+h1{font-size:15px;font-weight:600;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.st{font-size:12px;font-weight:500;padding:2px 8px;border-radius:10px;background:var(--track)}
+.w{margin-bottom:14px}.row{display:flex;justify-content:space-between;align-items:baseline}
+.n{font-weight:600}.p{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.bar{height:8px;border-radius:4px;background:var(--track);overflow:hidden;margin:6px 0 4px}
+.bar i{display:block;height:100%;border-radius:4px;transition:width .4s}
+.h{color:var(--hint);font-size:12px}
+.ft{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--sep);padding-top:10px}
+button{border:0;border-radius:8px;padding:7px 14px;font:600 13px system-ui;background:var(--btn);color:var(--btnt)}
+button:disabled{opacity:.5}
+</style></head><body>
+<h1>Claude usage <span class="st" id="st">–</span></h1>
+<div id="ws"></div>
+<div class="ft"><span class="h" id="up"></span><button id="rf">Refresh</button></div>
+<script>
+var W=window.TelegramWidget,d=null;
+function col(u){return u>=.9?'#e5484d':u>=.7?'#f5a524':'#30a46c'}
+function dur(s){if(s<=0)return'now';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+'d '+h+'h':h?h+'h '+m+'m':m+'m'}
+function ago(s){return s<60?'just now':s<3600?Math.floor(s/60)+' min ago':Math.floor(s/3600)+' h ago'}
+function render(){
+ try{d=JSON.parse(W?W.chatData:null)}catch(e){d=null}
+ var ws=document.getElementById('ws');
+ if(!d){ws.innerHTML='<p class="h">No data yet — tap Refresh.</p>';return}
+ var now=Date.now()/1e3,h='';
+ (d.w||[]).forEach(function(x){var u=Math.max(0,Math.min(1,x[1]));
+  h+='<div class="w"><div class="row"><span class="n">'+x[0]+'</span><span class="p">'+Math.round(u*100)+'%</span></div>'+
+  '<div class="bar"><i style="width:'+(u*100)+'%;background:'+col(u)+'"></i></div>'+
+  '<div class="h">'+(x[3]&&x[3]!='allowed'?'⛔ '+x[3]+' · ':'')+'resets in '+dur(x[2]-now)+'</div></div>'});
+ ws.innerHTML=h;
+ var st=document.getElementById('st');st.textContent=d.s=='allowed'?'✓ OK':'⚠ '+d.s;
+ document.getElementById('up').textContent='Updated '+ago(now-d.t);
+}
+document.getElementById('rf').addEventListener('click',function(){
+ var b=this;b.disabled=true;b.textContent='…';
+ W.request('refresh').then(function(){b.textContent='Updating…'},function(e){b.disabled=false;b.textContent='Retry ('+e.code+')'});
+});
+if(W){W.onEvent('chatDataChanged',function(){render();var b=document.getElementById('rf');b.disabled=false;b.textContent='Refresh'});W.ready&&W.ready()}
+render();setInterval(render,30000);
+</script></body></html>

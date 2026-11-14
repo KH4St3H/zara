@@ -1,0 +1,10 @@
+#!/bin/sh
+# Usage: grafana-mcp-env prod|dev  — runs mcp-grafana for that instance (stdio)
+set -a; . /etc/zara-assistant/env; set +a
+case "$1" in
+  prod) GRAFANA_URL=$GRAFANA_PROD_URL; GRAFANA_SERVICE_ACCOUNT_TOKEN=$GRAFANA_PROD_TOKEN ;;
+  dev)  GRAFANA_URL=$GRAFANA_DEV_URL;  GRAFANA_SERVICE_ACCOUNT_TOKEN=$GRAFANA_DEV_TOKEN ;;
+  *) echo "usage: $0 prod|dev" >&2; exit 2 ;;
+esac
+export GRAFANA_URL GRAFANA_SERVICE_ACCOUNT_TOKEN
+exec /usr/local/bin/mcp-grafana

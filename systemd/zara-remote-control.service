@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code Remote Control for zara (claude.ai/code + Claude app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/zara
+Environment=HOME=/root
+ExecStart=/root/.local/bin/claude remote-control --name zara
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

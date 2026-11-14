@@ -1,0 +1,16 @@
+[Unit]
+Description=zara personal assistant (Telegram + Claude Code)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=assistant
+EnvironmentFile=/etc/zara-assistant/env
+Environment=PATH=/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=/home/assistant/assistant
+ExecStart=/usr/bin/python3 -u /opt/zara-assistant/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Read-only kubectl for zara's Claude triage / investigation / briefing runs.
+
+Placed first on PATH as `kubectl`. Passes read-only commands to the real kubectl and refuses
+everything else: writes, exec/attach/port-forward/proxy/cp, impersonation, alternate credentials,
+and anything touching Secrets.
+"""
+import os, sys
+
+REAL = "/usr/local/bin/kubectl"
+READ_VERBS = {"get", "describe", "logs", "top", "events", "explain", "api-resources", "api-versions",
+              "version", "cluster-info"}
+SUB_ALLOWED = {"rollout": {"status", "history"}, "auth": {"can-i", "whoami"},
+               "config": {"get-contexts", "current-context"}}
+# global flags that take a separate value argument (so the value is not mistaken for the verb)
+VALUE_FLAGS = {"--context", "-n", "--namespace", "--cluster", "--request-timeout", "-v", "--v",
+               "-l", "--selector", "-o", "--output", "-c", "--container", "--tail", "--since",
+               "--field-selector", "--sort-by", "--since-time", "--max-log-requests"}
+FORBIDDEN_FLAGS = ("--as", "--as-group", "--as-uid", "--token", "--kubeconfig", "--user",
+                   "--username", "--password", "--server", "-s", "--client-key", "--client-certificate",
+                   "--certificate-authority", "--insecure-skip-tls-verify")
+
+
+def deny(msg):
+    sys.stderr.write("kubectl (read-only wrapper): %s\n" % msg)
+    sys.exit(1)
+
+
+args = sys.argv[1:]
+positional = []
+i = 0
+while i < len(args):
+    a = args[i]
+    name = a.split("=", 1)[0]
+    if name in FORBIDDEN_FLAGS:
+        deny("flag %s is not allowed" % name)
+    if a.startswith("-"):
+        if "=" not in a and a in VALUE_FLAGS:
+            i += 1
+    else:
+        positional.append(a)
+    i += 1
+
+if not positional:
+    os.execv(REAL, [REAL] + args)        # e.g. `kubectl --help`
+verb = positional[0]
+if verb in SUB_ALLOWED:
+    if len(positional) < 2 or positional[1] not in SUB_ALLOWED[verb]:
+        deny("only `%s %s` are allowed" % (verb, "|".join(sorted(SUB_ALLOWED[verb]))))
+elif verb not in READ_VERBS:
+    deny("`%s` is not a read-only command (allowed: %s)" % (verb, ", ".join(sorted(READ_VERBS))))
+if any("secret" in a.lower() for a in args):
+    deny("reading Secrets is not allowed")
+if any(a.split("=", 1)[0] == "--raw" for a in args) and verb != "get":
+    deny("--raw is only allowed with get")
+os.execv(REAL, [REAL] + args)

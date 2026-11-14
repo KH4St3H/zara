@@ -1,0 +1,15 @@
+[Unit]
+Description=zara LED matrix status (answers the MCU sketch via arduino-router)
+After=arduino-router.service alert-triage.service
+Wants=arduino-router.service
+
+[Service]
+User=assistant
+SupplementaryGroups=arduino-router
+EnvironmentFile=/etc/zara-assistant/env
+ExecStart=/usr/bin/python3 -u /opt/zara-assistant/zara_led.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew the assistant user's OpenBao token daily
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1d
+Persistent=true
+
+[Install]
+WantedBy=timers.target

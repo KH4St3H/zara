@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew the assistant user's OpenBao token
+
+[Service]
+Type=oneshot
+User=assistant
+Environment=BAO_ADDR=http://127.0.0.1:8200
+ExecStart=/usr/bin/bao token renew

@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude alert triage (decides which alerts phone-call the owner)
+After=network-online.target tgcaller.service
+Wants=network-online.target
+
+[Service]
+User=assistant
+EnvironmentFile=/etc/zara-assistant/env
+Environment=PATH=/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 -u /opt/zara-assistant/alert_triage.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

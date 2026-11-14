@@ -1,0 +1,12 @@
+[Unit]
+Description=Unseal OpenBao after it starts (key in /root/openbao/init.json)
+After=openbao.service
+Requires=openbao.service
+PartOf=openbao.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openbao-unseal
+
+[Install]
+WantedBy=multi-user.target openbao.service

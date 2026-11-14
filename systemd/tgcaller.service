@@ -1,0 +1,19 @@
+[Unit]
+Description=zara Telegram voice-call alerter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/zara-assistant/env
+Environment=STATE_DIRECTORY=/var/lib/tgcaller
+ExecStart=/opt/zara-assistant/tgcall-venv/bin/python -u /opt/zara-assistant/tgcaller.py
+Restart=always
+RestartSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/tgcaller
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

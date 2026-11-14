@@ -1,0 +1,9 @@
+[Unit]
+Description=zara morning briefing at 08:00 Helsinki time
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Europe/Helsinki
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=zara morning briefing (Telegram)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=assistant
+EnvironmentFile=/etc/zara-assistant/env
+Environment=PATH=/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 -u /opt/zara-assistant/briefing.py
+TimeoutStartSec=15min

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Unseal OpenBao after (re)start, using the key kept in /root/openbao/init.json (root only).
+export BAO_ADDR=http://127.0.0.1:8200
+for i in $(seq 60); do
+  bao status >/dev/null 2>&1
+  rc=$?                      # 0 = unsealed, 2 = sealed, 1 = not reachable yet
+  [ $rc -eq 0 ] && exit 0
+  [ $rc -eq 2 ] && break
+  sleep 2
+done
+KEY=$(python3 -c 'import json; print(json.load(open("/root/openbao/init.json"))["unseal_keys_b64"][0])')
+bao operator unseal "$KEY" >/dev/null && bao status >/dev/null

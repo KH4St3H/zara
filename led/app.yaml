@@ -1,0 +1,5 @@
+name: zara status
+description: Shows zara's alert status on the LED matrix. The logic runs in the zara-led system service; this app only flashes the sketch.
+ports: []
+bricks: []
+icon: 🚦
