@@ -3,6 +3,7 @@
 
 POST /alert     JSON {"channel_id","channel","text","tg_msg_id"}   (from mm-forwarder)
 POST /callback  JSON {"data","message_id","from_id"}                (button taps, via mm-forwarder)
+POST /investigate JSON {"channel_id","root_id","channel","text","focus"} (/investigate in a Mattermost thread)
 
 - Obvious noise (TRIAGE_SKIP regex) is dropped without asking Claude.
 - The same alert (channel + first line) is not re-triaged within DEDUP seconds.
@@ -297,6 +298,45 @@ def investigate(reply_id, a):
         tg_reply(reply_id, ("🔍 Investigation\n\n" + result)[:4000])
 
 
+MM_API = os.environ.get("MM_URL", "").rstrip("/") + "/api/v4"
+
+
+def mm(method, path, body):
+    req = urllib.request.Request(MM_API + path, method=method, data=json.dumps(body).encode(),
+                                 headers={"Authorization": "Bearer " + os.environ["MM_TOKEN"],
+                                          "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def investigate_mm(a):
+    """/investigate replied in a Mattermost thread: answer in that thread (posted as the owner)."""
+    head = "🔍 **zara's investigation**"
+    try:
+        status = mm("POST", "/posts", {"channel_id": a["channel_id"], "root_id": a["root_id"],
+                                       "message": "🔍 zara is investigating this alert…"})["id"]
+    except Exception as e:
+        status = None
+        log("investigate: cannot post status:", repr(e))
+    prompt = INVESTIGATE.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS)) % (a["channel"], a["text"])
+    if a.get("focus"):
+        prompt += "\n\nThe owner asks you to focus on: " + a["focus"]
+    with investigate_lock:
+        try:
+            result = run_claude(prompt, 30)
+        except Exception as e:
+            result = "Investigation failed: %r" % e
+    msg = (head + "\n\n" + result)[:16000]
+    try:
+        if status:
+            mm("PUT", "/posts/%s/patch" % status, {"message": msg})
+        else:
+            mm("POST", "/posts", {"channel_id": a["channel_id"], "root_id": a["root_id"], "message": msg})
+    except Exception as e:
+        log("investigate: cannot post result:", repr(e))
+    log("investigated (mattermost) ~" + a["channel"])
+
+
 def on_callback(c):
     if c.get("from_id") != OWNER:
         return
@@ -328,6 +368,9 @@ class H(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         if self.path == "/callback":
             threading.Thread(target=on_callback, args=(body,), daemon=True).start()
+            self.send_response(202); self.end_headers(); return
+        if self.path == "/investigate":
+            threading.Thread(target=investigate_mm, args=(body,), daemon=True).start()
             self.send_response(202); self.end_headers(); return
         if self.path not in ("/alert", "/resolved"):
             self.send_response(404); self.end_headers(); return

@@ -5,7 +5,7 @@ Forwards DMs, group DMs and @mentions of the token owner to a Telegram group.
 Replying (Telegram "reply") to a forwarded message from TELEGRAM_ALLOWED_USER
 posts the reply back to the same Mattermost channel/thread.
 """
-import json, os, sqlite3, threading, time, urllib.error, urllib.parse, urllib.request
+import json, os, re, sqlite3, threading, time, urllib.error, urllib.parse, urllib.request
 import websocket  # Debian: python3-websocket
 import tgmd
 
@@ -172,6 +172,25 @@ def forward_alert(post):
                            "tg_msg_id": ids[0] if ids else None})
 
 
+# Owner replies "/investigate [focus]" (or "!investigate") in a thread -> Claude investigates the
+# thread's root post (the alert) and answers in that thread.
+INVESTIGATE_CMD = re.compile(r"^\s*(?:[/!]investigate\b(.*)|investigate\s*)$", re.I | re.S)
+CMD_MAX_AGE = 30 * 60 * 1000      # don't act on stale commands replayed by catch-up
+
+
+def request_investigation(post, focus):
+    try:
+        root = mm("GET", "/posts/" + post["root_id"])
+        ch = channel(post["channel_id"])
+    except Exception as e:
+        return log("investigate: cannot load thread root:", repr(e))
+    log("investigate requested in ~%s" % (ch.get("display_name") or ch.get("name")))
+    post_json(TRIAGE_URL.rsplit("/", 1)[0] + "/investigate",
+              {"channel_id": post["channel_id"], "root_id": post["root_id"],
+               "channel": ch.get("display_name") or ch.get("name"), "text": render(root) or "(empty post)",
+               "focus": focus[:500]})
+
+
 def forward(post, channel_type, sender):
     ch = channel(post["channel_id"])
     if channel_type == "D":
@@ -210,6 +229,11 @@ def on_event(ev):
     # Skip what the owner typed, but NOT webhook posts: incoming webhooks created by the owner's
     # account post as the owner (most alert channels work like that).
     own = post.get("user_id") == ME and str((post.get("props") or {}).get("from_webhook")) != "true"
+    if own and post.get("root_id"):
+        m = INVESTIGATE_CMD.match(post.get("message") or "")
+        if m and time.time() * 1000 - post.get("create_at", 0) < CMD_MAX_AGE:
+            request_investigation(post, (m.group(1) or "").strip())
+        return
     if own or post.get("type", "").startswith("system_"):
         return
     if post["channel_id"] in ALERT_CHANNELS:
