@@ -7,3 +7,4 @@ config/env
 init.json
 .vault-token
 *.session
+bigram_local.json

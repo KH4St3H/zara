@@ -1,0 +1,17 @@
+[Unit]
+Description=Retrain the Mattermost sensitivity filter on recent chat vocabulary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=mm-forwarder
+EnvironmentFile=/etc/zara-assistant/env
+ExecStart=/usr/bin/python3 /opt/zara-assistant/sensitive_train.py 60
+ExecStartPost=+/bin/systemctl --no-block try-restart mm-forwarder.service
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+Nice=10

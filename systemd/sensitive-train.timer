@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly retrain of the Mattermost sensitivity filter
+
+[Timer]
+OnCalendar=Sun 04:30 Europe/Helsinki
+Persistent=true
+
+[Install]
+WantedBy=timers.target

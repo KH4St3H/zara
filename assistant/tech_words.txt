@@ -1,0 +1,22 @@
+kubernetes kubectl kubelet kubeadm minikube helm chart helmfile kustomize argocd argo fluxcd istio envoy
+linkerd traefik nginx ingress egress haproxy caddy cloudflare cloudflared tunnel wireguard openvpn
+prometheus alertmanager grafana loki tempo mimir thanos victoriametrics vmagent vmalert pushgateway exporter
+node_exporter blackbox jaeger opentelemetry otel zipkin sentry datadog newrelic pagerduty opsgenie
+postgres postgresql pgbouncer patroni mysql mariadb mongodb mongo redis valkey memcached cassandra scylla
+clickhouse elasticsearch opensearch kibana logstash filebeat fluentd fluentbit vector kafka kafkaconnect
+zookeeper rabbitmq nats pulsar activemq minio ceph rook longhorn etcd consul vault openbao keycloak
+airflow dagster prefect spark flink hadoop trino presto jupyter dbt
+docker dockerfile podman containerd crio buildkit kaniko harbor registry gitlab github bitbucket jenkins
+teamcity tekton dotnet golang nodejs typescript javascript python django fastapi flask rails laravel
+webhook webhooks websocket websockets grpc protobuf graphql restful oauth openid jwks saml ldap
+mattermost telegram slack discord jira confluence
+deployment deployments statefulset statefulsets daemonset daemonsets replicaset replicasets cronjob cronjobs
+configmap configmaps namespace namespaces serviceaccount clusterrole rolebinding clusterrolebinding
+persistentvolume persistentvolumeclaim storageclass hpa vpa keda karpenter autoscaler crashloopbackoff
+imagepullbackoff errimagepull oomkilled evicted pending terminating readiness liveness startup probe
+kubepodcrashlooping kubepodnotready kubenodenotready kubedeploymentreplicasmismatch kubejobfailed
+hostoutofdiskspace hostoutofmemory hosthighcpuload targetdown watchdog infoinhibitor
+healthcheck healthz readyz livez localhost upstream downstream backend frontend middleware
+microservice microservices loadbalancer threadpool workqueue dataloader pgdump backup backups
+ubuntu debian alpine centos rocky fedora systemd systemctl journalctl crontab sudo ssh sshd rsync
+terraform terragrunt ansible pulumi packer openstack proxmox vmware hetzner

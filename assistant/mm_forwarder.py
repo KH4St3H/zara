@@ -7,7 +7,7 @@ posts the reply back to the same Mattermost channel/thread.
 """
 import json, os, re, sqlite3, threading, time, urllib.error, urllib.parse, urllib.request
 import websocket  # Debian: python3-websocket
-import tgmd
+import sensitive, tgmd
 
 MM = os.environ["MM_URL"].rstrip("/")
 MM_TOKEN = os.environ["MM_TOKEN"]
@@ -18,6 +18,7 @@ OWNER = int(os.environ["TELEGRAM_ALLOWED_USER"])
 ALERT_CHAT = os.environ.get("MM_TG_ALERT_CHAT_ID", "").strip()
 ALERT_CHANNELS = {c.strip() for c in os.environ.get("MM_ALERT_CHANNELS", "").split(",") if c.strip()}
 TRIAGE_URL = os.environ.get("TRIAGE_URL", "http://127.0.0.1:8098/alert")
+REDACT = os.environ.get("SENSITIVE_FILTER", "1") != "0"   # hide secret-looking text before it leaves Mattermost
 DB_PATH = os.path.join(os.environ.get("STATE_DIRECTORY", "."), "map.db")
 
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -130,6 +131,18 @@ def alert_state(post, body):
     return "firing", firing, 0
 
 
+def clean(text):
+    """-> (text with secrets masked, note line or "")."""
+    if not REDACT:
+        return text, ""
+    try:
+        text, n = sensitive.redact(text)
+    except Exception as e:          # never lose a message because of the filter
+        log("redact failed:", repr(e))
+        return text, ""
+    return text, ("🔒 %d sensitive-looking value(s) hidden — open in Mattermost to see them" % n) if n else ""
+
+
 def post_json(url, payload):
     try:
         urllib.request.urlopen(urllib.request.Request(
@@ -143,6 +156,8 @@ def forward_alert(post):
     ch = channel(post["channel_id"])
     body = render(post)
     state, firing, n_resolved = alert_state(post, body)
+    body, note = clean(body)
+    firing = [clean(l)[0] for l in firing]
     up = body.upper()
     if state == "resolved":
         icon = "🟢"
@@ -151,6 +166,8 @@ def forward_alert(post):
     else:
         icon = "🔴" if ("FIRING" in up or "CRITICAL" in up or "DOWN" in up or firing) else "⚠️"
     text = "%s ~%s\n%s" % (icon, ch.get("display_name") or ch.get("name"), body or "(empty alert)")
+    if note:
+        text += "\n" + note
     if TEAM_NAME:
         text += "\n%s/%s/pl/%s" % (MM, TEAM_NAME, post["id"])
     ids = send_chunks(ALERT_CHAT, text)
@@ -187,7 +204,7 @@ def request_investigation(post, focus):
     log("investigate requested in ~%s" % (ch.get("display_name") or ch.get("name")))
     post_json(TRIAGE_URL.rsplit("/", 1)[0] + "/investigate",
               {"channel_id": post["channel_id"], "root_id": post["root_id"],
-               "channel": ch.get("display_name") or ch.get("name"), "text": render(root) or "(empty post)",
+               "channel": ch.get("display_name") or ch.get("name"), "text": clean(render(root))[0] or "(empty post)",
                "focus": focus[:500]})
 
 
@@ -201,7 +218,9 @@ def forward(post, channel_type, sender):
         head = "📣 @%s mentioned you in ~%s" % (sender, ch.get("display_name") or ch.get("name"))
     if post.get("root_id"):
         head += " (thread)"
-    body = render(post)
+    body, note = clean(render(post))
+    if note:
+        body += "\n" + note
     if post.get("file_ids"):
         body += "\n📎 %d attachment(s)" % len(post["file_ids"])
     if TEAM_NAME:
