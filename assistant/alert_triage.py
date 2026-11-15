@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tgmd  # noqa: E402
 
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
+TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "haiku")   # quick call/no-call verdicts; /investigate keeps the default model
 WORKDIR = os.path.expanduser("~/triage")
 DECISIONS = os.path.join(WORKDIR, "decisions.jsonl")
 FEEDBACK = os.path.join(WORKDIR, "feedback.jsonl")
@@ -197,9 +198,11 @@ def cancel_if_calling(channel_id, name):
         last_call["channels"].discard(channel_id)
 
 
-def run_claude(prompt, max_turns):
+def run_claude(prompt, max_turns, model=None):
     cmd = [CLAUDE, "-p", prompt, "--output-format", "json", "--max-turns", str(max_turns),
            "--allowedTools", *READ_ONLY_TOOLS]
+    if model:
+        cmd += ["--model", model]
     p = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, timeout=TIMEOUT, env=RO_ENV)
     return json.loads(p.stdout)["result"]
 
@@ -207,7 +210,7 @@ def run_claude(prompt, max_turns):
 def triage(batch):
     alerts = "\n".join("[%d] channel ~%s\n<<<\n%s\n>>>" % (i, a["channel"], a["text"][:2500])
                        for i, a in enumerate(batch))
-    result = run_claude(PROMPT.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS)) % feedback_examples() + alerts, 15)
+    result = run_claude(PROMPT.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS)) % feedback_examples() + alerts, 15, TRIAGE_MODEL)
     m = re.search(r"\{.*\}", result, re.S)
     return json.loads(m.group(0))
 
