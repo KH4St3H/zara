@@ -106,6 +106,8 @@ def send_chunks(chat, text):
 FIRING_MARK = ("🔴", "🔥", "❌", "🚨", "⛔")
 RESOLVED_MARK = ("✅", "🟢", "☑")
 GREEN = {"good", "#36a64f", "#2eb886", "#00ff00", "green"}
+AM_HEADER = re.compile(r"^\s*\[(?:FIRING:(\d+)(?:,\s*RESOLVED:(\d+))?|RESOLVED)\]", re.I | re.M)
+AM_RESOLVED_SECTION = re.compile(r"(?im)^\s*\d+\s+resolved alert\(s\):")
 
 
 def alert_state(post, body):
@@ -118,11 +120,23 @@ def alert_state(post, body):
     items = (post.get("message") or "").splitlines()
     for a in atts:
         items += (a.get("text") or "").splitlines()
+    # Alertmanager: "[FIRING:2, RESOLVED:1] name" header, then "N firing alert(s):" and
+    # "N resolved alert(s):" sections. Its counts are authoritative.
+    am = AM_HEADER.search(body)
+    if am:
+        if am.group(1) is None:                                   # "[RESOLVED] ..."
+            return "resolved", [], 0
+        n_res = int(am.group(2) or 0)
+        if int(am.group(1)) == 0:
+            return "resolved", [], n_res
+        if n_res:
+            firing_part = AM_RESOLVED_SECTION.split(body)[0].splitlines()[1:]   # drop the header line
+            return "mixed", [l for l in firing_part if l.strip()], n_res
+        return "firing", [], 0
     items = [l.strip() for l in items if l.strip()]
     firing = [l for l in items if l.startswith(FIRING_MARK)]
     resolved = sum(1 for l in items if l.startswith(RESOLVED_MARK))
-    up = body.upper()
-    if "[RESOLVED" in up or (resolved and not firing):
+    if re.match(r"\s*\[RESOLVED\]", body, re.I) or (resolved and not firing):
         return "resolved", [], resolved
     if body.lstrip().startswith(RESOLVED_MARK) and not firing:
         return "resolved", [], resolved
