@@ -21,7 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tgmd  # noqa: E402
 
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
-TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "haiku")   # quick call/no-call verdicts; /investigate keeps the default model
+TRIAGE_MODEL = os.environ.get("TRIAGE_MODEL", "haiku")            # quick call/no-call verdicts
+INVESTIGATE_MODEL = os.environ.get("INVESTIGATE_MODEL", "opus")   # pinned, so plan default changes don't apply
 WORKDIR = os.path.expanduser("~/triage")
 DECISIONS = os.path.join(WORKDIR, "decisions.jsonl")
 FEEDBACK = os.path.join(WORKDIR, "feedback.jsonl")
@@ -234,7 +235,8 @@ def run_claude_live(prompt, name, on_link=None):
     env = dict(RO_ENV, TERM="xterm-256color")
     env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)       # Remote Control needs the stored claude.ai login
     master, slave = pty.openpty()
-    p = subprocess.Popen([CLAUDE, "--session-id", sid, "--remote-control", name[:60], "--permission-mode", "dontAsk",
+    p = subprocess.Popen([CLAUDE, "--session-id", sid, "--remote-control", name[:60], "--model", INVESTIGATE_MODEL,
+                          "--permission-mode", "dontAsk",
                           "--allowedTools", *READ_ONLY_TOOLS, "--", prompt],
                          stdin=slave, stdout=slave, stderr=slave, cwd=WORKDIR, env=env, start_new_session=True)
     os.close(slave)
@@ -291,7 +293,7 @@ def run_claude_live(prompt, name, on_link=None):
         if link:
             return "Investigation timed out — see the session: " + link, link
         log("investigate: live session failed, running headless")
-        return run_claude(prompt, 30), None
+        return run_claude(prompt, 30, INVESTIGATE_MODEL), None
     threading.Timer(KEEP_OPEN, close).start()      # keep it open in the Claude app for follow-up questions
     return answer, link
 
