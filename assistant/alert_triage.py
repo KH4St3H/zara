@@ -14,7 +14,7 @@ POST /investigate JSON {"channel_id","root_id","channel","text","focus"} (/inves
 - Quiet hours: decisions still posted, but no calls.
 - On triage failure: call only if the alert is in MM_CALL_CHANNELS (old behaviour).
 """
-import hashlib, html, json, os, queue, re, subprocess, sys, threading, time, urllib.parse, urllib.request
+import hashlib, html, json, os, pty, queue, re, signal, subprocess, sys, threading, time, urllib.parse, urllib.request, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -207,6 +207,95 @@ def run_claude(prompt, max_turns, model=None):
     return json.loads(p.stdout)["result"]
 
 
+# Investigations run as an interactive Remote Control session so the owner can follow (and steer) them live
+# from the Claude app / claude.ai/code. Same read-only tools and kubectl wrapper; anything else is denied.
+INVESTIGATE_TIMEOUT = 600
+KEEP_OPEN = int(os.environ.get("INVESTIGATE_KEEP_MIN", "60")) * 60   # session stays reachable after the answer
+TRANSCRIPTS = os.path.expanduser("~/.claude/projects/" + re.sub(r"[^A-Za-z0-9]", "-", WORKDIR))
+
+
+def _transcript(path):
+    try:
+        with open(path) as f:
+            out = []
+            for line in f:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:      # line still being written
+                    pass
+            return out
+    except OSError:
+        return []
+
+
+def run_claude_live(prompt, name, on_link=None):
+    """-> (answer, link). Falls back to a headless run if the interactive session can't start."""
+    sid = str(uuid.uuid4())
+    env = dict(RO_ENV, TERM="xterm-256color")
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)       # Remote Control needs the stored claude.ai login
+    master, slave = pty.openpty()
+    p = subprocess.Popen([CLAUDE, "--session-id", sid, "--remote-control", name[:60], "--permission-mode", "dontAsk",
+                          "--allowedTools", *READ_ONLY_TOOLS, "--", prompt],
+                         stdin=slave, stdout=slave, stderr=slave, cwd=WORKDIR, env=env, start_new_session=True)
+    os.close(slave)
+
+    def drain():                                   # the TUI blocks if nobody reads its screen
+        while True:
+            try:
+                if not os.read(master, 65536):
+                    break
+            except OSError:
+                break
+    threading.Thread(target=drain, daemon=True).start()
+
+    def close():
+        try:
+            os.killpg(p.pid, signal.SIGTERM)
+            p.wait(15)
+        except Exception:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except Exception:
+                pass
+        try:
+            os.close(master)
+        except OSError:
+            pass
+
+    path = os.path.join(TRANSCRIPTS, sid + ".jsonl")
+    link, answer, start = None, None, time.time()
+    while time.time() - start < INVESTIGATE_TIMEOUT and p.poll() is None:
+        time.sleep(3)
+        entries = _transcript(path)
+        if not link:
+            b = next((e for e in entries if e.get("type") == "bridge-session" and e.get("bridgeSessionId")), None)
+            if b:
+                link = "https://claude.ai/code/session_" + b["bridgeSessionId"].split("_", 1)[-1]
+                if on_link:
+                    try:
+                        on_link(link)
+                    except Exception as e:
+                        log("investigate: link callback failed:", repr(e))
+        msgs = [e for e in entries if e.get("type") in ("user", "assistant")]
+        if msgs and msgs[-1]["type"] == "assistant" and msgs[-1]["message"].get("stop_reason") == "end_turn":
+            final = msgs[-1]["message"].get("id")   # one message is split over several lines (thinking, text)
+            answer = "\n".join(c.get("text", "") for e in msgs if e["type"] == "assistant"
+                               and e["message"].get("id") == final for c in e["message"]["content"]
+                               if isinstance(c, dict) and c.get("type") == "text").strip() or None
+            if answer:
+                break
+        if not entries and time.time() - start > 60:
+            break                                  # never started (login, dialog, ...)
+    if answer is None:
+        close()
+        if link:
+            return "Investigation timed out — see the session: " + link, link
+        log("investigate: live session failed, running headless")
+        return run_claude(prompt, 30), None
+    threading.Timer(KEEP_OPEN, close).start()      # keep it open in the Claude app for follow-up questions
+    return answer, link
+
+
 def triage(batch):
     alerts = "\n".join("[%d] channel ~%s\n<<<\n%s\n>>>" % (i, a["channel"], a["text"][:2500])
                        for i, a in enumerate(batch))
@@ -286,13 +375,27 @@ Alert:
 >>>"""
 
 
+def session_name(a):
+    first = next((l for l in a["text"].splitlines() if l.strip()), "alert")
+    return "🔍 ~%s: %s" % (a["channel"], re.sub(r"[*_`#>\[\]]", "", first).strip()[:40])
+
+
 def investigate(reply_id, a):
     status = tg_reply(reply_id, "🔍 Investigating…")
+
+    def on_link(link):
+        if status:
+            tg("editMessageText", chat_id=ALERT_CHAT, message_id=status, parse_mode="HTML",
+               text='🔍 Investigating… <a href="%s">follow live in Claude</a>' % html.escape(link))
+    link = None
     with investigate_lock:
         try:
-            result = run_claude(INVESTIGATE.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS)) % (a["channel"], a["text"]), 30)
+            result, link = run_claude_live(INVESTIGATE.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS))
+                                           % (a["channel"], a["text"]), session_name(a), on_link)
         except Exception as e:
             result = "Investigation failed: %r" % e
+    if link:
+        result += "\n\n[💬 Ask follow-up questions in Claude](%s) (open for %d min)" % (link, KEEP_OPEN // 60)
     text = tgmd.to_html("🔍 **Investigation**\n\n" + result)[:4000]
     try:
         tg("editMessageText", chat_id=ALERT_CHAT, message_id=status, text=text, parse_mode="HTML",
@@ -324,9 +427,13 @@ def investigate_mm(a):
     prompt = INVESTIGATE.replace("{CONTEXTS}", ", ".join(KUBE_CONTEXTS)) % (a["channel"], a["text"])
     if a.get("focus"):
         prompt += "\n\nThe owner asks you to focus on: " + a["focus"]
+    def on_link(link):     # only the owner can open it; colleagues just see the status
+        if status:
+            mm("PUT", "/posts/%s/patch" % status,
+               {"message": "🔍 zara is investigating this alert… ([follow live](%s))" % link})
     with investigate_lock:
         try:
-            result = run_claude(prompt, 30)
+            result, _ = run_claude_live(prompt, session_name(a), on_link)
         except Exception as e:
             result = "Investigation failed: %r" % e
     msg = (head + "\n\n" + result)[:16000]
