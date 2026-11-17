@@ -19,6 +19,7 @@ GITLAB_HOST = os.environ.get("GITLAB_HOST", "gitlab.com")
 GITLAB_USER = os.environ.get("GITLAB_USER", "")
 VERBS = ["get", "top", "describe", "events"]
 # kubectl resolves to /opt/zara-assistant/bin/kubectl, a wrapper that only runs read-only commands
+MODEL = os.environ.get("BRIEFING_MODEL", "opus")
 TOOLS = ["Bash(kubectl:*)", "mcp__grafana-prod"]
 RO_ENV = dict(os.environ, PATH="/opt/zara-assistant/bin:" + os.environ.get("PATH", "/usr/bin:/bin"))  # read-only kubectl wrapper first
 
@@ -122,7 +123,7 @@ def main():
         pass
     cmd = [CLAUDE, "-p", PROMPT.replace("{CONTEXTS}", ", ".join(CONTEXTS)).replace("{GITLAB}", GITLAB_HOST)
            % (merge_requests(), overnight(), zara_status(), my_tasks()), "--output-format", "json",
-           "--max-turns", "40", "--allowedTools", *TOOLS]
+           "--max-turns", "40", "--model", MODEL, "--allowedTools", *TOOLS]
     try:
         p = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, timeout=600, env=RO_ENV)
         text = json.loads(p.stdout)["result"]

@@ -17,6 +17,7 @@ PROBE_DIR = os.path.expanduser("~/.usage-probe")
 WIDGET_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage_widget.html")
 STATS_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stats_widget.html")
 TIMEOUT = 600
+MODEL = os.environ.get("BOT_MODEL", "opus")   # pinned: the plan default (Fable) uses limits much faster
 USAGE_MAX_AGE = 300
 WINDOW_NAMES = {"five_hour": "Session (5h)", "seven_day": "Weekly", "seven_day_opus": "Weekly · Opus",
                 "seven_day_sonnet": "Weekly · Sonnet"}
@@ -287,7 +288,7 @@ def on_callback(cq):
 
 # ---------- conversation ----------
 def ask_claude(prompt, on_event=None):
-    cmd = [CLAUDE, "-p", prompt, "--dangerously-skip-permissions"]
+    cmd = [CLAUDE, "-p", prompt, "--dangerously-skip-permissions", "--model", MODEL]
     sid = load_session()
     if sid:
         cmd += ["--resume", sid]
