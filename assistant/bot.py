@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram <-> Claude Code bridge. Only answers TELEGRAM_ALLOWED_USER."""
+"""Telegram <-> Claude Code bridge. Only answers TELEGRAM_ALLOWED_USER (the owner) and TELEGRAM_ADMINS."""
 import html, json, os, queue, signal, subprocess, threading, time, urllib.error, urllib.request, urllib.parse
 import live
 import stats
@@ -7,7 +7,10 @@ import tasks_client
 import tgmd
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-ALLOWED = int(os.environ["TELEGRAM_ALLOWED_USER"])
+OWNER = int(os.environ["TELEGRAM_ALLOWED_USER"])
+# extra people who may use the bot (comma-separated Telegram user ids); each gets their own conversation
+ADMINS = {int(x) for x in os.environ.get("TELEGRAM_ADMINS", "").replace(" ", "").split(",") if x}
+ALLOWED = {OWNER} | ADMINS
 API = f"https://api.telegram.org/bot{TOKEN}/"
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 WORKDIR = os.path.expanduser("~/assistant")
@@ -40,15 +43,19 @@ def send(chat_id, text):
             tg("sendMessage", chat_id=chat_id, text=part)
 
 
-def load_session():
+def state_file(uid):
+    return STATE if uid == OWNER else "%s-%d" % (STATE, uid)
+
+
+def load_session(uid):
     try:
-        return open(STATE).read().strip() or None
+        return open(state_file(uid)).read().strip() or None
     except FileNotFoundError:
         return None
 
 
-def save_session(sid):
-    with open(STATE, "w") as f:
+def save_session(uid, sid):
+    with open(state_file(uid), "w") as f:
         f.write(sid or "")
 
 
@@ -196,7 +203,7 @@ def on_widget_query(q):
         tg("answerWidgetQuery", widget_query_id=q["id"], data="refreshing")
     except Exception as e:
         print("answerWidgetQuery failed:", e, flush=True)
-    if q.get("from", {}).get("id") != ALLOWED or not q.get("chat") or not q.get("message_id"):
+    if q.get("from", {}).get("id") not in ALLOWED or not q.get("chat") or not q.get("message_id"):
         return
     qd = q.get("data", "")
     if qd.startswith("s:"):
@@ -269,7 +276,7 @@ def add_task_from_text(chat_id, text, reply_to=None, source="telegram"):
 
 def on_callback(cq):
     data = cq.get("data", "")
-    mine = cq.get("from", {}).get("id") == ALLOWED
+    mine = cq.get("from", {}).get("id") in ALLOWED
     msg = cq.get("message") or {}
     note = "Not allowed" if not mine else None
     if mine and data.startswith("td:"):
@@ -287,9 +294,9 @@ def on_callback(cq):
 
 
 # ---------- conversation ----------
-def ask_claude(prompt, on_event=None):
+def ask_claude(prompt, uid, on_event=None):
     cmd = [CLAUDE, "-p", prompt, "--dangerously-skip-permissions", "--model", MODEL]
-    sid = load_session()
+    sid = load_session(uid)
     if sid:
         cmd += ["--resume", sid]
     final, err = run_stream(cmd, WORKDIR, track=True, on_event=on_event)
@@ -297,10 +304,10 @@ def ask_claude(prompt, on_event=None):
         return None
     if final is None:
         if sid:  # session may be gone; retry fresh once
-            save_session(None)
-            return ask_claude(prompt, on_event)
+            save_session(uid, None)
+            return ask_claude(prompt, uid, on_event)
         return f"Claude error:\n{err}"
-    save_session(final.get("session_id"))
+    save_session(uid, final.get("session_id"))
     return final.get("result") or "(empty reply)"
 
 
@@ -322,13 +329,13 @@ def busy():
 def worker():
     """Runs Claude requests one at a time so the poll loop stays free for /cancel."""
     while True:
-        chat_id, text = jobs.get()
+        chat_id, text, uid = jobs.get()
         current["cancelled"] = False
         current["active"] = True
         view = live.LiveView(tg, chat_id).start()
         current["draft_id"] = view.draft_id
         try:
-            reply = ask_claude(text, on_event=view.on_event)
+            reply = ask_claude(text, uid, on_event=view.on_event)
         except subprocess.TimeoutExpired:
             reply = "That took too long, so I stopped. Try a smaller request."
         except Exception as e:
@@ -374,6 +381,7 @@ def cancel(chat_id):
 def handle(msg):
     """Runs on the poll loop: commands are instant, everything else goes to the worker."""
     chat_id = msg["chat"]["id"]
+    uid = msg["from"]["id"]
     text = msg.get("text", "")
     cmd = text.split("@")[0].strip() if text.startswith("/") else ""
     if cmd in ("/start", "/help"):
@@ -383,7 +391,7 @@ def handle(msg):
     if cmd == "/new":
         if busy():
             return send(chat_id, "I'm busy — /cancel first, then /new.")
-        save_session(None)
+        save_session(uid, None)
         return send(chat_id, "Started a fresh conversation.")
     if cmd == "/usage":
         return threading.Thread(target=cmd_usage, args=(chat_id,), daemon=True).start()
@@ -410,7 +418,11 @@ def handle(msg):
         return send(chat_id, "I can only read text for now.")
     if busy():
         send(chat_id, "⏳ Queued — I'll get to it after the current request. /cancel to stop.")
-    jobs.put((chat_id, text))
+    if uid != OWNER:   # zara's CLAUDE.md speaks of "the owner"; say who this is
+        who = msg["from"].get("first_name", "") + (" @" + msg["from"]["username"] if msg["from"].get("username") else "")
+        text = ("[Message from admin %s (Telegram id %d), NOT the owner. Same rules apply; tg-send and tg-call "
+                "reach the owner, not this admin.]\n\n%s" % (who.strip(), uid, text))
+    jobs.put((chat_id, text, uid))
 
 
 def main():
@@ -451,7 +463,7 @@ def main():
                 msg = u.get("message")
                 if not msg:
                     continue
-                if msg.get("from", {}).get("id") != ALLOWED:
+                if msg.get("from", {}).get("id") not in ALLOWED:
                     print(f"ignored message from {msg.get('from', {}).get('id')}", flush=True)
                     continue
                 handle(msg)
