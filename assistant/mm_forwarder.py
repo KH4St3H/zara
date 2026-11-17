@@ -5,9 +5,9 @@ Forwards DMs, group DMs and @mentions of the token owner to a Telegram group.
 Replying (Telegram "reply") to a forwarded message from TELEGRAM_ALLOWED_USER
 posts the reply back to the same Mattermost channel/thread.
 """
-import json, os, re, sqlite3, threading, time, urllib.error, urllib.parse, urllib.request
+import html, json, os, re, sqlite3, threading, time, urllib.error, urllib.parse, urllib.request
 import websocket  # Debian: python3-websocket
-import sensitive, tgmd
+import sensitive, tasks_client, tgmd
 
 MM = os.environ["MM_URL"].rstrip("/")
 MM_TOKEN = os.environ["MM_TOKEN"]
@@ -23,6 +23,10 @@ DB_PATH = os.path.join(os.environ.get("STATE_DIRECTORY", "."), "map.db")
 
 db = sqlite3.connect(DB_PATH, check_same_thread=False)
 db.execute("CREATE TABLE IF NOT EXISTS map (tg_id INTEGER PRIMARY KEY, channel_id TEXT, root_id TEXT)")
+try:
+    db.execute("ALTER TABLE map ADD COLUMN post_id TEXT")      # which post a Telegram message shows
+except sqlite3.OperationalError:
+    pass
 db_lock = threading.Lock()
 
 
@@ -243,7 +247,8 @@ def forward(post, channel_type, sender):
     root = post.get("root_id") or post["id"]
     for mid in send_chunks(CHAT, text):
         with db_lock:
-            db.execute("INSERT OR REPLACE INTO map VALUES (?,?,?)", (mid, post["channel_id"], root))
+            db.execute("INSERT OR REPLACE INTO map (tg_id, channel_id, root_id, post_id) VALUES (?,?,?,?)",
+                       (mid, post["channel_id"], root, post["id"]))
             db.commit()
 
 
@@ -348,6 +353,84 @@ def mm_loop():
             backoff = min(backoff * 2, 120)
 
 
+# ---------- Telegram reply "/task" -> task list ----------
+TASK_CMD = re.compile(r"^\s*(?:[/!]task(?:@\w+)?|📌)(?:\s+(.*))?$", re.I | re.S)
+PERMALINK = re.compile(r"https?://\S+/pl/([a-z0-9]{26})")
+
+
+def permalink(post_id):
+    return "%s/%s/pl/%s" % (MM, TEAM_NAME, post_id) if TEAM_NAME else None
+
+
+def where(ch, sender=""):
+    if ch.get("type") == "D":
+        return "DM from @%s" % sender
+    if ch.get("type") == "G":
+        return "group DM (%s)" % ch.get("display_name", "")
+    return "~" + (ch.get("display_name") or ch.get("name", ""))
+
+
+def mm_context(post_id):
+    """-> (text for Claude, source label, permalink): the flagged post plus the thread around it."""
+    post = mm("GET", "/posts/" + post_id)
+    ch = channel(post["channel_id"])
+    sender = username(post["user_id"])
+    msgs = [post]
+    if post.get("root_id") or post.get("reply_count"):
+        th = mm("GET", "/posts/%s/thread" % (post.get("root_id") or post["id"]))
+        allp = sorted(th["posts"].values(), key=lambda p: p["create_at"])
+        root = allp[:1]
+        upto = [p for p in allp[1:] if p["create_at"] <= post["create_at"]][-12:]
+        msgs = root + [p for p in upto if p["id"] != root[0]["id"]]
+    lines = []
+    for p in msgs:
+        mark = ">>> FLAGGED: " if p["id"] == post["id"] else ""
+        lines.append("%s@%s: %s" % (mark, username(p["user_id"]), clean(render(p))[0]))
+    text = "Mattermost, %s%s:\n\n%s" % (where(ch, sender), " (thread)" if len(msgs) > 1 else "",
+                                         "\n\n".join(lines))
+    if len(msgs) > 1:
+        text += "\n\n(The task is about the FLAGGED message; the rest of the thread is context.)"
+    return text, "mattermost " + where(ch, sender), permalink(post["id"])
+
+
+def make_task(chat_id, msg, note):
+    rep = msg["reply_to_message"]
+    try:
+        tg("setMessageReaction", chat_id=chat_id, message_id=msg["message_id"],
+           reaction=[{"type": "emoji", "emoji": "✍"}])
+    except Exception:
+        pass
+    try:
+        with db_lock:
+            row = db.execute("SELECT channel_id, root_id, post_id FROM map WHERE tg_id=?",
+                             (rep["message_id"],)).fetchone()
+        quoted = rep.get("text") or rep.get("caption") or ""
+        link = PERMALINK.search(quoted)
+        pid = (row and (row[2] or row[1])) or (link and link.group(1))
+        if pid:
+            text, source, url = mm_context(pid)
+        else:
+            text, source, url = quoted, "telegram", None
+        if chat_id == ALERT_CHAT:
+            source = "alert " + source.replace("mattermost ", "")
+        if not text.strip():
+            raise tasks_client.TasksError("that message has no text")
+        t = tasks_client.api("POST", "/api/tasks/from-text",
+                             {"text": text, "note": note, "source": source, "source_url": url})
+        out = tasks_client.created_text(t)
+        log("task #%d created from a Telegram reply" % t["id"])
+    except Exception as e:
+        log("task from reply failed:", repr(e))
+        out = "❌ Couldn't add the task: %s" % html.escape(str(e)[:300])
+    try:
+        tg("sendMessage", chat_id=chat_id, text=out, parse_mode="HTML", disable_web_page_preview="true",
+           reply_parameters={"message_id": msg["message_id"], "allow_sending_without_reply": True})
+        tg("setMessageReaction", chat_id=chat_id, message_id=msg["message_id"],
+           reaction=[{"type": "emoji", "emoji": "👌" if out.startswith("📌") else "🤷"}])
+    except Exception as e:
+        log("task reply failed:", repr(e))
+
+
 # ---------- Telegram -> Mattermost (replies) ----------
 def tg_loop():
     offset = None
@@ -386,6 +469,12 @@ def tg_loop():
                             log("discovery: %s in chat %s %s %r" % (k, c["id"], c.get("type"), c.get("title")))
                 m = u.get("message") or {}
                 chat_id = str(m.get("chat", {}).get("id"))
+                tm = TASK_CMD.match(m.get("text") or "")
+                if tm and m.get("reply_to_message") and chat_id in (CHAT, ALERT_CHAT) and chat_id \
+                        and m.get("from", {}).get("id") == OWNER:
+                    threading.Thread(target=make_task, args=(chat_id, m, (tm.group(1) or "").strip()),
+                                     daemon=True).start()
+                    continue
                 if not CHAT or chat_id not in (CHAT,):
                     if m and chat_id != ALERT_CHAT:
                         log("discovery: message in chat", chat_id, repr(m.get("chat", {}).get("title")))

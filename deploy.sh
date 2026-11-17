@@ -20,6 +20,6 @@ scp -q prometheus/prometheus.yml "$H":/etc/prometheus/prometheus.yml
 scp -q claude/admin-CLAUDE.md "$H":/root/zara/CLAUDE.md
 
 ssh "$H" 'systemctl daemon-reload &&
-  systemctl restart zara-assistant mm-forwarder alert-triage tgcaller zara-led zara-web &&
+  systemctl restart zara-assistant mm-forwarder alert-triage tgcaller zara-led zara-web zara-tasks &&
   systemctl reload prometheus 2>/dev/null || true'
 echo "deployed. LED sketch changes need: ssh $H \"su arduino -c 'arduino-app-cli app stop user:zara-status; sleep 3; arduino-app-cli app start user:zara-status'\""

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Telegram <-> Claude Code bridge. Only answers TELEGRAM_ALLOWED_USER."""
-import json, os, queue, signal, subprocess, threading, time, urllib.error, urllib.request, urllib.parse
+import html, json, os, queue, signal, subprocess, threading, time, urllib.error, urllib.request, urllib.parse
 import live
 import stats
+import tasks_client
 import tgmd
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -220,6 +221,70 @@ def on_widget_query(q):
                 print("widget update failed:", msg[:300], flush=True)
 
 
+# ---------- tasks ----------
+def login_url():
+    try:
+        return tasks_client.api("POST", "/api/login-link", timeout=10)["url"]
+    except tasks_client.TasksError:
+        return None
+
+
+def send_task_list(chat_id, message_id=None):
+    try:
+        url = login_url()
+        text, kb = tasks_client.list_view(url)
+    except tasks_client.TasksError as e:
+        return send(chat_id, "Couldn't read the task list: %s" % e)
+    params = dict(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview="true")
+    try:
+        if message_id:
+            return tg("editMessageText", message_id=message_id, **params)
+        return tg("sendMessage", **params)
+    except urllib.error.HTTPError as e:
+        err = e.read().decode()
+        if "not modified" in err:
+            return
+        if url:   # Telegram refuses some URLs (plain http/LAN) in buttons -> put the link in the text
+            kb["inline_keyboard"][-1] = [b for b in kb["inline_keyboard"][-1] if "url" not in b]
+            params.update(text=text + '\n\n<a href="%s">🌐 Open task list</a> (one-time login link, 1 h)'
+                          % html.escape(url), reply_markup=kb)
+            return tg("editMessageText", message_id=message_id, **params) if message_id \
+                else tg("sendMessage", **params)
+        print("task list send failed:", err[:300], flush=True)
+
+
+def add_task_from_text(chat_id, text, reply_to=None, source="telegram"):
+    try:
+        tg("sendChatAction", chat_id=chat_id, action="typing")
+        t = tasks_client.api("POST", "/api/tasks/from-text", {"text": text, "source": source})
+        out = tasks_client.created_text(t)
+    except tasks_client.TasksError as e:
+        out = "❌ Couldn't add the task: %s" % html.escape(str(e))
+    p = dict(chat_id=chat_id, text=out, parse_mode="HTML", disable_web_page_preview="true")
+    if reply_to:
+        p["reply_parameters"] = {"message_id": reply_to, "allow_sending_without_reply": True}
+    tg("sendMessage", **p)
+
+
+def on_callback(cq):
+    data = cq.get("data", "")
+    mine = cq.get("from", {}).get("id") == ALLOWED
+    msg = cq.get("message") or {}
+    note = "Not allowed" if not mine else None
+    if mine and data.startswith("td:"):
+        try:
+            t = tasks_client.api("PATCH", "/api/tasks/%d" % int(data[3:]), {"status": "done"}, timeout=10)
+            note = "✅ Done: " + t["title"][:150]
+        except (tasks_client.TasksError, ValueError) as e:
+            note = "Couldn't update: %s" % e
+    try:
+        tg("answerCallbackQuery", callback_query_id=cq["id"], text=note or "")
+    except Exception:
+        pass
+    if mine and (data == "tr" or data.startswith("td:")) and msg.get("chat"):
+        send_task_list(msg["chat"]["id"], msg.get("message_id"))
+
+
 # ---------- conversation ----------
 def ask_claude(prompt, on_event=None):
     cmd = [CLAUDE, "-p", prompt, "--dangerously-skip-permissions"]
@@ -243,7 +308,10 @@ HELP = ("Hi, I'm zara. Just talk to me.\n"
         "/cancel — stop what I'm doing right now\n"
         "/usage — Claude plan usage\n"
         "/stats — zara resource usage (CPU, RAM, disk, temp, network)\n"
-        "/briefing — morning briefing now (also sent daily at 08:00)")
+        "/briefing — morning briefing now (also sent daily at 08:00)\n"
+        "/tasks — your task list (tap ✅ to finish one, 🌐 for the web page)\n"
+        "/task <text> — add a task; Claude picks the priority. Also works as a reply to a message.\n"
+        "Or just ask me: \"what's on my list?\", \"add a task to…\", \"mark 3 done\".")
 
 
 def busy():
@@ -325,6 +393,18 @@ def handle(msg):
         send(chat_id, "☀️ Putting your briefing together — about a minute.")
         return threading.Thread(target=subprocess.run, args=(["/usr/bin/python3", script],),
                                 kwargs={"timeout": 900}, daemon=True).start()
+    if cmd == "/tasks":
+        return threading.Thread(target=send_task_list, args=(chat_id,), daemon=True).start()
+    if cmd == "/task":
+        body = text.split(None, 1)[1].strip() if len(text.split(None, 1)) > 1 else ""
+        rep = msg.get("reply_to_message") or {}
+        quoted = rep.get("text") or rep.get("caption") or ""
+        if quoted:
+            body = quoted + ("\n\n(Owner's note: %s)" % body if body else "")
+        if not body:
+            return send(chat_id, "Usage: /task <what needs doing> — or reply /task to a message.")
+        return threading.Thread(target=add_task_from_text, args=(chat_id, body, msg["message_id"]),
+                                daemon=True).start()
     if not text:
         return send(chat_id, "I can only read text for now.")
     if busy():
@@ -339,7 +419,9 @@ def main():
                                       {"command": "cancel", "description": "Stop the current request"},
                                       {"command": "usage", "description": "Claude plan usage"},
                                       {"command": "stats", "description": "zara resource usage"},
-                                      {"command": "briefing", "description": "Morning briefing now"}])
+                                      {"command": "briefing", "description": "Morning briefing now"},
+                                      {"command": "tasks", "description": "My task list"},
+                                      {"command": "task", "description": "Add a task (Claude sets the priority)"}])
     except Exception:
         pass
     threading.Thread(target=worker, daemon=True).start()
@@ -348,7 +430,8 @@ def main():
     while True:
         try:
             params = {"timeout": 60,
-                      "allowed_updates": ["message", "widget_query", "stopped_message_generation"]}
+                      "allowed_updates": ["message", "widget_query", "stopped_message_generation",
+                                          "callback_query"]}
             if offset:
                 params["offset"] = offset
             for u in tg("getUpdates", **params).get("result", []):
@@ -360,6 +443,9 @@ def main():
                     continue
                 if "widget_query" in u:  # must be answered within 15 s, so never block on a Claude call
                     threading.Thread(target=on_widget_query, args=(u["widget_query"],), daemon=True).start()
+                    continue
+                if "callback_query" in u:
+                    threading.Thread(target=on_callback, args=(u["callback_query"],), daemon=True).start()
                     continue
                 msg = u.get("message")
                 if not msg:

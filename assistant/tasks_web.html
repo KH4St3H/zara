@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zara tasks</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦊</text></svg>">
+<style>
+  :root {
+    --bg: #fdf6ee; --card: #fff; --ink: #3b2f2a; --muted: #8a7a70; --line: #efe3d7;
+    --accent: #ff8a5b; --accent-soft: #ffe3d6;
+    --p1: #e5484d; --p2: #f08c00; --p3: #3e7bfa; --p4: #9a8f88; --ok: #2f9e6b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1714; --card: #27201c; --ink: #f1e7df; --muted: #a8988d; --line: #3a302a;
+      --accent: #ff9b72; --accent-soft: #4a2d20; --p4: #8c8079;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 80px; }
+  header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  h1 { font-size: 24px; margin: 0; }
+  .count { color: var(--muted); }
+  .add { margin: 16px 0 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .add textarea { flex: 1 1 260px; min-height: 42px; resize: vertical; padding: 10px 12px; border-radius: 12px;
+                  border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; }
+  button, select, input[type=date] { font: inherit; color: var(--ink); background: var(--card);
+                  border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .hint { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .tabs button.on { background: var(--accent-soft); border-color: var(--accent); }
+  .tabs input { flex: 1 1 140px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line);
+                background: var(--card); color: var(--ink); font: inherit; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+  .task { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--pc);
+          border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 10px; }
+  .task.done { opacity: .55; }
+  .task.done .title { text-decoration: line-through; }
+  .check { width: 22px; height: 22px; flex: none; margin-top: 1px; border-radius: 50%; border: 2px solid var(--pc);
+           background: none; padding: 0; display: grid; place-items: center; color: #fff; font-size: 13px; }
+  .task.done .check { background: var(--ok); border-color: var(--ok); }
+  .body { flex: 1; min-width: 0; }
+  .title { font-weight: 600; cursor: text; overflow-wrap: anywhere; outline: none; border-radius: 4px; }
+  .title:focus { box-shadow: 0 0 0 2px var(--accent-soft); }
+  .meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .pill { border-radius: 999px; padding: 1px 9px; border: 1px solid var(--line); background: none; font-size: 12px;
+          color: var(--ink); cursor: pointer; }
+  .pill.pr { color: #fff; background: var(--pc); border-color: var(--pc); font-weight: 600; }
+  .pill.doing { background: var(--accent-soft); border-color: var(--accent); }
+  .overdue { color: var(--p1); font-weight: 600; }
+  .meta a { color: var(--muted); }
+  .editor textarea { width: 100%; min-height: 70px; margin-top: 6px; padding: 8px; border-radius: 8px;
+                     border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; }
+  .editor { display: none; }
+  .open .editor { display: block; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .row button, .row select, .row input { padding: 4px 10px; font-size: 13px; }
+  .del { color: var(--p1); }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+           padding: 8px 16px; border-radius: 10px; font-size: 14px; display: none; max-width: calc(100% - 32px); }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>🦊 Tasks</h1><span class="count" id="count"></span></header>
+
+  <div class="add">
+    <textarea id="new" placeholder="New task… or paste a message and let Claude turn it into one" rows="1"></textarea>
+    <select id="newPrio" title="Priority">
+      <option value="1">P1 urgent</option><option value="2">P2 high</option>
+      <option value="3" selected>P3 normal</option><option value="4">P4 low</option>
+    </select>
+    <button class="primary" id="addBtn">Add</button>
+    <button id="smartBtn" title="Claude writes the title and notes and picks the priority and due date">✨ Summarize</button>
+  </div>
+  <p class="hint">In Telegram, reply <b>/task</b> to a forwarded Mattermost message to add it here, or ask zara.</p>
+
+  <div class="tabs">
+    <button data-f="active" class="on">Open</button>
+    <button data-f="doing">Doing</button>
+    <button data-f="done">Done</button>
+    <button data-f="all">All</button>
+    <input id="q" type="search" placeholder="Search">
+  </div>
+  <div id="list"></div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const PR = {1: ["P1", "Urgent", "var(--p1)"], 2: ["P2", "High", "var(--p2)"], 3: ["P3", "Normal", "var(--p3)"],
+            4: ["P4", "Low", "var(--p4)"]};
+let tasks = [], filter = "active", openId = null, everything = false;
+try { filter = localStorage.getItem("zf") || filter; } catch (e) {}
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", 3500); }
+
+async function api(method, path, body) {
+  const r = await fetch(path, {method, headers: {"Content-Type": "application/json", "X-Requested-With": "zara"},
+                               body: body ? JSON.stringify(body) : undefined});
+  if (r.status === 401) { location.reload(); throw new Error("logged out"); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function load() {
+  everything = filter === "all" || filter === "done";
+  tasks = await api("GET", "/api/tasks" + (everything ? "?all=1" : ""));
+  render();
+}
+
+function today() { const d = new Date(); return d.toISOString().slice(0, 10); }
+function dueLabel(due) {
+  if (!due) return "";
+  const days = Math.round((new Date(due + "T00:00") - new Date(today() + "T00:00")) / 864e5);
+  const txt = days === 0 ? "today" : days === 1 ? "tomorrow" : days === -1 ? "yesterday"
+            : days < 0 ? `${-days} days ago` : days < 7 ? new Date(due + "T00:00").toLocaleDateString(undefined, {weekday: "short"})
+            : new Date(due + "T00:00").toLocaleDateString(undefined, {month: "short", day: "numeric"});
+  return `<span class="${days < 0 ? "overdue" : ""}">📅 ${txt}</span>`;
+}
+
+function render() {
+  document.documentElement.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.f === filter));
+  const q = $("#q").value.trim().toLowerCase();
+  let shown = tasks.filter(t => filter === "all" ? true : filter === "active" ? t.status !== "done" : t.status === filter);
+  if (q) shown = shown.filter(t => (t.title + " " + t.notes).toLowerCase().includes(q));
+  const open = tasks.filter(t => t.status !== "done");
+  $("#count").textContent = `${open.length} open` + (open.filter(t => t.priority === 1).length ? ` · ${open.filter(t => t.priority === 1).length} urgent` : "");
+  if (!shown.length) { $("#list").innerHTML = `<div class="empty">${q ? "Nothing matches." : filter === "done" ? "Nothing done yet." : "Nothing to do. 🎉"}</div>`; return; }
+  let html = "", group = null;
+  for (const t of shown) {
+    const g = t.status === "done" ? "Done" : PR[t.priority][1];
+    if (g !== group) { html += `<h2>${g}</h2>`; group = g; }
+    const [code, , color] = PR[t.priority];
+    const created = new Date(t.created_at * 1000).toLocaleDateString(undefined, {month: "short", day: "numeric"});
+    html += `
+    <div class="task ${t.status === "done" ? "done" : ""} ${openId === t.id ? "open" : ""}" style="--pc:${color}" data-id="${t.id}">
+      <button class="check" data-act="toggle" title="${t.status === "done" ? "Reopen" : "Mark done"}">${t.status === "done" ? "✓" : ""}</button>
+      <div class="body">
+        <div class="title" contenteditable="plaintext-only" spellcheck="false" data-act="title">${esc(t.title)}</div>
+        <div class="meta">
+          <button class="pill pr" data-act="prio" title="Change priority">${code}</button>
+          ${t.status === "doing" ? `<button class="pill doing" data-act="doing" title="Back to open">▶ doing</button>` : ""}
+          ${dueLabel(t.due)}
+          <span>#${t.id} · ${created}${t.source && t.source !== "manual" ? " · " + esc(t.source) : ""}</span>
+          ${t.source_url ? `<a href="${esc(t.source_url)}" target="_blank" rel="noopener">source ↗</a>` : ""}
+          <button class="pill" data-act="expand">${openId === t.id ? "close" : t.notes ? "notes" : "edit"}</button>
+        </div>
+        <div class="editor">
+          <textarea data-act="notes" placeholder="Notes">${esc(t.notes)}</textarea>
+          <div class="row">
+            <select data-act="setprio">${[1,2,3,4].map(p => `<option value="${p}" ${p === t.priority ? "selected" : ""}>${PR[p][0]} ${PR[p][1].toLowerCase()}</option>`).join("")}</select>
+            <input type="date" data-act="due" value="${t.due || ""}" title="Due date">
+            ${t.status !== "done" ? `<button data-act="doing">${t.status === "doing" ? "⏸ Not doing" : "▶ Doing"}</button>` : ""}
+            <button class="del" data-act="delete">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+  $("#list").innerHTML = html;
+}
+
+async function patch(id, fields) {
+  try { const t = await api("PATCH", "/api/tasks/" + id, fields);
+        tasks = tasks.map(x => x.id === id ? t : x); render(); }
+  catch (e) { toast("⚠️ " + e.message); load(); }
+}
+
+$("#list").addEventListener("click", async e => {
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const id = +el.closest(".task").dataset.id, t = tasks.find(x => x.id === id);
+  switch (el.dataset.act) {
+    case "toggle": patch(id, {status: t.status === "done" ? "open" : "done"}); break;
+    case "prio": patch(id, {priority: t.priority % 4 + 1}); break;
+    case "doing": patch(id, {status: t.status === "doing" ? "open" : "doing"}); break;
+    case "expand": openId = openId === id ? null : id; render(); break;
+    case "delete":
+      if (!confirm(`Delete "${t.title}"?`)) return;
+      try { await api("DELETE", "/api/tasks/" + id); tasks = tasks.filter(x => x.id !== id); openId = null; render(); }
+      catch (err) { toast("⚠️ " + err.message); }
+  }
+});
+$("#list").addEventListener("change", e => {
+  const el = e.target, id = +el.closest(".task")?.dataset.id; if (!id) return;
+  if (el.dataset.act === "setprio") patch(id, {priority: +el.value});
+  if (el.dataset.act === "due") patch(id, {due: el.value || null});
+  if (el.dataset.act === "notes") patch(id, {notes: el.value});
+});
+$("#list").addEventListener("keydown", e => {
+  if (e.target.dataset.act === "title" && e.key === "Enter") { e.preventDefault(); e.target.blur(); }
+  if (e.target.dataset.act === "title" && e.key === "Escape") { render(); }
+});
+$("#list").addEventListener("focusout", e => {
+  if (e.target.dataset.act !== "title") return;
+  const id = +e.target.closest(".task").dataset.id, v = e.target.textContent.trim();
+  const t = tasks.find(x => x.id === id);
+  if (v && v !== t.title) patch(id, {title: v}); else if (!v) render();
+});
+
+async function add(smart) {
+  const text = $("#new").value.trim(); if (!text) return $("#new").focus();
+  const btns = [$("#addBtn"), $("#smartBtn")]; btns.forEach(b => b.disabled = true);
+  if (smart) toast("✨ Claude is reading it…");
+  try {
+    const t = smart ? await api("POST", "/api/tasks/from-text", {text, source: "web"})
+                    : await api("POST", "/api/tasks", {title: text, priority: +$("#newPrio").value, source: "web"});
+    $("#new").value = ""; autosize();
+    if (filter === "done") filter = "active";
+    await load();
+    if (smart) toast(`Added #${t.id} as ${PR[t.priority][0]}`);
+  } catch (e) { toast("⚠️ " + e.message); }
+  btns.forEach(b => b.disabled = false);
+}
+function autosize() { const n = $("#new"); n.style.height = "auto"; n.style.height = Math.min(n.scrollHeight + 2, 240) + "px"; }
+$("#new").addEventListener("input", autosize);
+$("#new").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); add(false); } });
+$("#addBtn").onclick = () => add(false);
+$("#smartBtn").onclick = () => add(true);
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  filter = b.dataset.f; try { localStorage.setItem("zf", filter); } catch (e) {} openId = null; load(); });
+$("#q").addEventListener("input", render);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+setInterval(() => { if (!document.hidden && !document.activeElement.closest?.(".task, .add")) load(); }, 30000);
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""zara-tasks — the owner's work task list (talks to the zara-tasks service).
+
+  zara-tasks list [--all] [--json]       open + doing tasks (--all: include done)
+  zara-tasks show ID
+  zara-tasks add "title" [-p 1-4] [--due YYYY-MM-DD] [--notes "..."]
+  zara-tasks smart "free text"           Claude writes title/notes and picks priority + due date
+  zara-tasks done ID... | start ID... | reopen ID...
+  zara-tasks edit ID [--title ..] [-p N] [--due YYYY-MM-DD|none] [--notes ..]
+  zara-tasks rm ID
+Priorities: 1 urgent (today), 2 high (this week), 3 normal, 4 low.
+"""
+import argparse, json, os, sys, urllib.error, urllib.request
+
+URL = os.environ.get("TASKS_API", "http://127.0.0.1:8082")
+
+
+def token():
+    if os.environ.get("TASKS_TOKEN"):
+        return os.environ["TASKS_TOKEN"]
+    for line in open("/etc/zara-assistant/env"):
+        if line.startswith("TASKS_TOKEN="):
+            return line.split("=", 1)[1].strip().strip("'\"")
+    sys.exit("TASKS_TOKEN is not set")
+
+
+def api(method, path, body=None):
+    req = urllib.request.Request(URL + path, method=method,
+                                 data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Authorization": "Bearer " + token(), "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=200) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        sys.exit("error: " + json.loads(e.read() or b"{}").get("error", str(e)))
+
+
+def line(t):
+    mark = {"done": "✓", "doing": "▶"}.get(t["status"], "·")
+    due = "  due " + t["due"] if t.get("due") else ""
+    return "%s #%d P%d %s%s" % (mark, t["id"], t["priority"], t["title"], due)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="zara-tasks", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("list"); p.add_argument("--all", action="store_true"); p.add_argument("--json", action="store_true")
+    sub.add_parser("show").add_argument("id", type=int)
+    p = sub.add_parser("add"); p.add_argument("title"); p.add_argument("-p", "--priority", type=int, default=3)
+    p.add_argument("--due"); p.add_argument("--notes", default="")
+    p = sub.add_parser("smart"); p.add_argument("text"); p.add_argument("--note", default="")
+    for name in ("done", "start", "reopen"):
+        sub.add_parser(name).add_argument("ids", type=int, nargs="+")
+    p = sub.add_parser("edit"); p.add_argument("id", type=int); p.add_argument("--title")
+    p.add_argument("-p", "--priority", type=int); p.add_argument("--due"); p.add_argument("--notes")
+    sub.add_parser("rm").add_argument("id", type=int)
+    a = ap.parse_args()
+
+    if a.cmd == "list":
+        ts = api("GET", "/api/tasks" + ("?all=1" if a.all else ""))
+        if not a.all:
+            ts = [t for t in ts if t["status"] != "done"]
+        if a.json:
+            return print(json.dumps(ts, ensure_ascii=False, indent=1))
+        print("\n".join(line(t) for t in ts) or "(no tasks)")
+    elif a.cmd == "show":
+        t = api("GET", "/api/tasks/%d" % a.id)
+        print(line(t))
+        for k in ("notes", "source", "source_url"):
+            if t.get(k):
+                print("%s: %s" % (k, t[k]))
+    elif a.cmd == "add":
+        print("added", line(api("POST", "/api/tasks", {"title": a.title, "priority": a.priority, "due": a.due,
+                                                        "notes": a.notes, "source": "zara"})))
+    elif a.cmd == "smart":
+        t = api("POST", "/api/tasks/from-text", {"text": a.text, "note": a.note, "source": "zara"})
+        print("added", line(t)); print("notes:", t["notes"])
+    elif a.cmd in ("done", "start", "reopen"):
+        status = {"done": "done", "start": "doing", "reopen": "open"}[a.cmd]
+        for i in a.ids:
+            print(line(api("PATCH", "/api/tasks/%d" % i, {"status": status})))
+    elif a.cmd == "edit":
+        d = {k: v for k, v in (("title", a.title), ("priority", a.priority), ("notes", a.notes)) if v is not None}
+        if a.due is not None:
+            d["due"] = None if a.due.lower() == "none" else a.due
+        print(line(api("PATCH", "/api/tasks/%d" % a.id, d)))
+    elif a.cmd == "rm":
+        api("DELETE", "/api/tasks/%d" % a.id); print("deleted #%d" % a.id)
+
+
+if __name__ == "__main__":
+    main()

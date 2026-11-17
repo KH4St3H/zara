@@ -7,7 +7,7 @@ Claude only gets read-only tools.
 import json, os, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import stats, tgmd  # noqa: E402
+import stats, tasks_client, tgmd  # noqa: E402
 
 CLAUDE = os.path.expanduser("~/.local/bin/claude")
 WORKDIR = os.path.expanduser("~/briefing")
@@ -70,6 +70,15 @@ def zara_status():
         return "unavailable (%s)" % e
 
 
+def my_tasks():
+    try:
+        ts = [t for t in tasks_client.api("GET", "/api/tasks", timeout=15) if t["status"] != "done"]
+    except Exception as e:
+        return "(task list unavailable: %s)" % e
+    return "\n".join("#%d P%d %s%s%s" % (t["id"], t["priority"], t["title"], " (doing)" if t["status"] == "doing" else "",
+                                         " due " + t["due"] if t.get("due") else "") for t in ts) or "(none)"
+
+
 PROMPT = """Write my morning briefing as an SRE. Be concise and scannable; it is read on a phone.
 
 Tool rule: only plain single commands are permitted. Run exactly one command per Bash call, with no
@@ -91,11 +100,15 @@ Overnight alert triage log:
 
 zara (the board you run on): %s
 
+My open tasks (P1 urgent .. P4 low):
+%s
+
 Format (Markdown):
 **☀️ Good morning** + one-line overall verdict (all good / needs attention).
 ### 🚨 Needs attention   (only if something does; most important first, each with a next step)
 ### 🌙 Overnight          (group repeated alerts; say what would have called me)
 ### ☸️ Clusters           (one line per context)
+### 📋 Today's tasks     (P1s, anything overdue or due today/tomorrow, what I'm doing; then "+N more open")
 ### 🔀 Merge requests     (to review / mine)
 ### 🖥 zara               (one line)
 Skip sections with nothing to say. No preamble, no closing remarks."""
@@ -108,7 +121,7 @@ def main():
     except Exception:
         pass
     cmd = [CLAUDE, "-p", PROMPT.replace("{CONTEXTS}", ", ".join(CONTEXTS)).replace("{GITLAB}", GITLAB_HOST)
-           % (merge_requests(), overnight(), zara_status()), "--output-format", "json",
+           % (merge_requests(), overnight(), zara_status(), my_tasks()), "--output-format", "json",
            "--max-turns", "40", "--allowedTools", *TOOLS]
     try:
         p = subprocess.run(cmd, cwd=WORKDIR, capture_output=True, text=True, timeout=600, env=RO_ENV)

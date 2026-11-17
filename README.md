@@ -4,11 +4,12 @@ A personal assistant running on an Arduino UNO Q (Debian trixie, arm64) on the h
 
 | Part | What it does | Code | Service |
 |---|---|---|---|
-| Telegram bot | Chat with Claude (`claude -p`), live drafts, `/new /cancel /usage /stats /briefing` | `assistant/bot.py`, `live.py`, `tgmd.py`, `stats.py`, `*_widget.html` | `zara-assistant` |
+| Telegram bot | Chat with Claude (`claude -p`), live drafts, `/new /cancel /usage /stats /briefing /tasks /task` | `assistant/bot.py`, `live.py`, `tgmd.py`, `stats.py`, `*_widget.html` | `zara-assistant` |
 | Mattermost forwarder | Forwards DMs/mentions and alert channels to Telegram; websocket ping + catch-up replay; alert state (firing/mixed/resolved) | `assistant/mm_forwarder.py` | `mm-forwarder` |
 | Sensitivity filter | Hides secret-looking text (passwords, tokens, keys, random "gibberish") from Mattermost messages before they reach Telegram or Claude; retrained weekly on words used in your own chats (kept on the board) | `assistant/sensitive.py`, `sensitive_train.py`, `bigram_base.json`, `tech_words.txt` | `sensitive-train.timer` |
 | Alert triage | Claude decides whether an alert is worth a phone call; quiet hours 23:00–08:00 Europe/Helsinki; cancels calls on recovery | `assistant/alert_triage.py` | `alert-triage` |
 | Telegram caller | Voice calls with Piper TTS (`tg-call`) | `assistant/tgcaller.py`, `tgcall_login.py` | `tgcaller` |
+| Task list | Work tasks: web page on the LAN (login via one-time link from `/tasks`), `/tasks` + `/task` in Telegram, reply `/task` to a forwarded Mattermost message and Claude turns it (with its thread) into a task with a priority; `zara-tasks` CLI for zara | `assistant/tasks.py`, `tasks_web.html`, `tasks_client.py`, `bin/zara-tasks` | `zara-tasks` |
 | Morning briefing | 08:00 summary | `assistant/briefing.py` | `zara-briefing.timer` |
 | LED matrix | Status on the 8×13 matrix: scrolling time/date/temperature banner, unread count, alerts | `assistant/zara_led.py` (Linux side), `led/` (App Lab app + sketch) | `zara-led` |
 | Read-only kubectl | Wrapper used by triage/briefing (read verbs only, no Secrets) | `assistant/bin/kubectl` | – |

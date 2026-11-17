@@ -1,0 +1,19 @@
+[Unit]
+Description=zara task list (API + web page)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=assistant
+EnvironmentFile=/etc/zara-assistant/env
+Environment=PATH=/home/assistant/.local/bin:/usr/local/bin:/usr/bin:/bin
+StateDirectory=zara-tasks
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 -u /opt/zara-assistant/tasks.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
